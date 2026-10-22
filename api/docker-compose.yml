@@ -11,7 +11,11 @@ services:
       - --logits_processors=vllm.model_executor.models.unlimited_ocr:NGramPerReqLogitsProcessor
       - --no-enable-prefix-caching
       - --mm-processor-cache-gb=0
+      # 32k is only needed by strategy=whole_document; per-page requests stay under ~12k tokens.
       - --max-model-len=32768
+      # Many short per-page sequences: batch wide. Starting points, tune with `vllm bench serve`.
+      - --max-num-seqs=${VLLM_MAX_NUM_SEQS:-128}
+      - --max-num-batched-tokens=${VLLM_MAX_NUM_BATCHED_TOKENS:-8192}
     ipc: host
     ports:
       - "${VLLM_PORT:-8100}:8000"
@@ -42,7 +46,12 @@ services:
         required: false
     ports:
       - "${API_PORT:-8200}:8000"
+    volumes:
+      - ocr-jobs:/data/jobs
     depends_on:
       vllm:
         condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  ocr-jobs:

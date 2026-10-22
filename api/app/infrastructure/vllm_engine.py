@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import httpx
 
 from app.core.errors import EngineResponseError, EngineUnavailableError
-from app.domain.models import PageImage
+from app.domain.models import EngineOutput, PageImage
 
 # The prompt must start with the <image> token, otherwise the model returns nothing.
 SINGLE_IMAGE_PROMPT = "<image>document parsing."
@@ -28,10 +28,13 @@ class VllmOcrEngine:
         self._client = client
         self._config = config
 
-    async def recognize(self, images: Sequence[PageImage]) -> str:
+    async def recognize(
+        self, images: Sequence[PageImage], *, max_tokens: int | None = None, temperature: float = 0.0
+    ) -> EngineOutput:
         if not images:
             raise ValueError("At least one image is required")
-        response = await self._post("/chat/completions", self._build_payload(images))
+        payload = self._build_payload(images, max_tokens or self._config.max_tokens, temperature)
+        response = await self._post("/chat/completions", payload)
         return self._extract_content(response)
 
     async def is_healthy(self) -> bool:
@@ -41,7 +44,7 @@ class VllmOcrEngine:
             return False
         return response.is_success
 
-    def _build_payload(self, images: Sequence[PageImage]) -> dict:
+    def _build_payload(self, images: Sequence[PageImage], max_tokens: int, temperature: float) -> dict:
         is_multi = len(images) > 1
         prompt = MULTI_IMAGE_PROMPT if is_multi else SINGLE_IMAGE_PROMPT
         window = self._config.multi_image_window if is_multi else self._config.single_image_window
@@ -50,8 +53,8 @@ class VllmOcrEngine:
         return {
             "model": self._config.model_name,
             "messages": [{"role": "user", "content": content}],
-            "max_tokens": self._config.max_tokens,
-            "temperature": 0.0,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
             # Special tokens carry the layout markers; skipping them empties the output.
             "skip_special_tokens": False,
             "vllm_xargs": {"ngram_size": self._config.ngram_size, "window_size": window},
@@ -69,11 +72,13 @@ class VllmOcrEngine:
         return response.json()
 
     @staticmethod
-    def _extract_content(response: dict) -> str:
+    def _extract_content(response: dict) -> EngineOutput:
         try:
-            return response["choices"][0]["message"]["content"] or ""
+            choice = response["choices"][0]
+            text = choice["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as exc:
             raise EngineResponseError("Unexpected response shape from OCR engine") from exc
+        return EngineOutput(text=text, truncated=choice.get("finish_reason") == "length")
 
 
 def _to_data_url(image: PageImage) -> str:

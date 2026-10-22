@@ -19,3 +19,15 @@ class EngineUnavailableError(OcrError):
 
 class EngineResponseError(OcrError):
     """The OCR engine answered with an error or an unexpected payload."""
+
+
+class InvalidRequestError(OcrError):
+    """A request parameter is invalid or not allowed by the server configuration."""
+
+
+class JobNotFoundError(OcrError):
+    """No job exists with the requested id."""
+
+
+class JobStateError(OcrError):
+    """The job is not in a state that allows the requested operation."""

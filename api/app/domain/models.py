@@ -16,6 +16,12 @@ class PageImage:
 
 
 @dataclass(frozen=True, slots=True)
+class EngineOutput:
+    text: str
+    truncated: bool = False  # generation stopped at max_tokens instead of finishing
+
+
+@dataclass(frozen=True, slots=True)
 class Block:
     """A layout region detected by the model."""
 
@@ -30,3 +36,4 @@ class OcrResult:
     markdown: str
     blocks: list[Block] = field(default_factory=list)
     raw: str = ""
+    truncated: bool = False

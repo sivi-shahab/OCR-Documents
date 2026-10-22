@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import Callable
 
-from app.domain.models import OcrResult, PageImage, PdfStrategy
+from app.domain.models import EngineOutput, OcrResult, PageImage, PdfStrategy
 from app.domain.parser import parse_blocks, to_markdown
 from app.domain.ports import DocumentRenderer, OcrEngine
 
@@ -42,6 +42,12 @@ class OcrService:
 
     async def _recognize(self, images: list[PageImage], page: int | None) -> OcrResult:
         async with self._page_limiter:
-            raw = await self._engine.recognize(images)
-        blocks = parse_blocks(raw)
-        return OcrResult(page=page, markdown=to_markdown(blocks), blocks=blocks, raw=raw)
+            output = await self._engine.recognize(images)
+        return to_result(output, page)
+
+
+def to_result(output: EngineOutput, page: int | None) -> OcrResult:
+    blocks = parse_blocks(output.text)
+    return OcrResult(
+        page=page, markdown=to_markdown(blocks), blocks=blocks, raw=output.text, truncated=output.truncated
+    )

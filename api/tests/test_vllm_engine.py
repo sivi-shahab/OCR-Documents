@@ -33,7 +33,9 @@ async def test_single_image_payload_uses_recipe_parameters():
         captured.update(json.loads(request.content))
         return completion("ok")
 
-    assert await make_engine(handler).recognize([IMAGE]) == "ok"
+    assert (await make_engine(handler).recognize([IMAGE])).text == "ok"
+    assert captured["max_tokens"] == 100
+    assert captured["temperature"] == 0.0
     assert captured["skip_special_tokens"] is False
     assert captured["vllm_xargs"] == {"ngram_size": 35, "window_size": 128}
     text, image = captured["messages"][0]["content"]
@@ -70,3 +72,17 @@ async def test_connection_failure_raises_unavailable():
     with pytest.raises(EngineUnavailableError):
         await make_engine(handler).recognize([IMAGE])
     assert await make_engine(handler).is_healthy() is False
+
+
+async def test_per_request_overrides_and_finish_reason():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "cut"}, "finish_reason": "length"}]}
+        )
+
+    output = await make_engine(handler).recognize([IMAGE], max_tokens=42, temperature=0.4)
+    assert output.truncated is True
+    assert (captured["max_tokens"], captured["temperature"]) == (42, 0.4)

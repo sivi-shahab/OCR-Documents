@@ -8,6 +8,9 @@ from app.core.errors import (
     EngineResponseError,
     EngineUnavailableError,
     InvalidDocumentError,
+    InvalidRequestError,
+    JobNotFoundError,
+    JobStateError,
     OcrError,
 )
 
@@ -15,9 +18,12 @@ logger = logging.getLogger(__name__)
 
 _STATUS_BY_ERROR: dict[type[OcrError], int] = {
     InvalidDocumentError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    InvalidRequestError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     DocumentTooLargeError: status.HTTP_413_CONTENT_TOO_LARGE,
     EngineUnavailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
     EngineResponseError: status.HTTP_502_BAD_GATEWAY,
+    JobNotFoundError: status.HTTP_404_NOT_FOUND,
+    JobStateError: status.HTTP_409_CONFLICT,
 }
 
 
