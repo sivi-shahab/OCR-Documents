@@ -1,0 +1,48 @@
+services:
+  vllm:
+    image: vllm/vllm-openai:unlimited-ocr
+    command:
+      - baidu/Unlimited-OCR
+      # HF commit 8249d20 (2026-10-14) renamed model_type to "unlimited_ocr", which this
+      # image does not recognise. Pin the last compatible revision (same weights).
+      - --revision=07dea832e22aefee32ad281d4b80551282e1c168
+      - --served-model-name=Unlimited-OCR
+      - --trust-remote-code
+      - --logits_processors=vllm.model_executor.models.unlimited_ocr:NGramPerReqLogitsProcessor
+      - --no-enable-prefix-caching
+      - --mm-processor-cache-gb=0
+      - --max-model-len=32768
+    ipc: host
+    ports:
+      - "${VLLM_PORT:-8100}:8000"
+    volumes:
+      - ${HF_CACHE_DIR:-/data/hf-cache}:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${VLLM_GPU:-0}"]
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 120s
+    restart: unless-stopped
+
+  api:
+    build: .
+    image: local/unlimited-ocr-api:latest
+    environment:
+      OCR_VLLM_BASE_URL: http://vllm:8000/v1
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "${API_PORT:-8200}:8000"
+    depends_on:
+      vllm:
+        condition: service_healthy
+    restart: unless-stopped
