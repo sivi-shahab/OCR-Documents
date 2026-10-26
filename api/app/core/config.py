@@ -22,6 +22,13 @@ class Settings(BaseSettings):
     single_image_window: int = Field(default=128, ge=0)
     multi_image_window: int = Field(default=1024, ge=0)
 
+    # Azure AI Document Intelligence (/v1/ocr/azure); the endpoint is off until both are set.
+    azure_di_endpoint: str = ""  # e.g. https://<resource>.cognitiveservices.azure.com
+    azure_di_api_key: str = ""
+    azure_di_model_id: str = "prebuilt-layout"
+    azure_di_api_version: str = "2024-11-30"
+    azure_di_timeout_seconds: float = Field(default=600, gt=0)
+
     # Input limits
     max_upload_mb: int = Field(default=50, gt=0)
     max_pdf_pages: int = Field(default=200, gt=0)
@@ -68,6 +75,10 @@ class Settings(BaseSettings):
     @property
     def webhooks_enabled(self) -> bool:
         return bool(self.webhook_secret and self.webhook_hosts)
+
+    @property
+    def azure_enabled(self) -> bool:
+        return bool(self.azure_di_endpoint and self.azure_di_api_key)
 
     @property
     def max_engine_connections(self) -> int:

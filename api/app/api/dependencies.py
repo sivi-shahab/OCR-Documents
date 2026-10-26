@@ -7,7 +7,13 @@ from urllib.parse import urlsplit
 from fastapi import Depends, Request, UploadFile
 
 from app.core.config import Settings, get_settings
-from app.core.errors import DocumentTooLargeError, InvalidDocumentError, InvalidRequestError
+from app.core.errors import (
+    DocumentTooLargeError,
+    EngineUnavailableError,
+    InvalidDocumentError,
+    InvalidRequestError,
+)
+from app.infrastructure.azure_document_intelligence import AzureDocumentIntelligence
 from app.services.job_service import JobService
 from app.services.ocr_service import OcrService
 
@@ -20,6 +26,15 @@ def get_ocr_service(request: Request) -> OcrService:
 
 def get_job_service(request: Request) -> JobService:
     return request.app.state.job_service
+
+
+def get_azure_ocr(request: Request) -> AzureDocumentIntelligence:
+    azure = getattr(request.app.state, "azure_ocr", None)
+    if azure is None:
+        raise EngineUnavailableError(
+            "Azure Document Intelligence is not configured: set OCR_AZURE_DI_ENDPOINT and OCR_AZURE_DI_API_KEY"
+        )
+    return azure
 
 
 async def read_upload(file: UploadFile, settings: Annotated[Settings, Depends(get_settings)]) -> bytes:
@@ -70,5 +85,6 @@ def validate_callback_url(url: str, settings: Settings) -> str:
 
 OcrServiceDep = Annotated[OcrService, Depends(get_ocr_service)]
 JobServiceDep = Annotated[JobService, Depends(get_job_service)]
+AzureOcrDep = Annotated[AzureDocumentIntelligence, Depends(get_azure_ocr)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 UploadContent = Annotated[bytes, Depends(read_upload)]

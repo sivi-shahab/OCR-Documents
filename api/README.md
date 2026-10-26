@@ -27,6 +27,7 @@ Konfigurasi aplikasi ada di `.env` (lihat `.env.example`; semua bersifat opsiona
 | POST | `/v1/ocr/image` | OCR satu gambar (PNG/JPEG/WEBP; BMP/TIFF dikonversi ke PNG) |
 | POST | `/v1/ocr/pdf` | OCR PDF secara sinkron (dokumen kecil, ≤ `OCR_MAX_PDF_PAGES`) |
 | POST | `/v1/ocr/jobs` | OCR PDF besar (300+ halaman) secara asinkron, lihat [Job untuk dokumen besar](#job-untuk-dokumen-besar) |
+| POST | `/v1/ocr/azure` | OCR PDF/gambar dengan Azure AI Document Intelligence, lihat [Azure Document Intelligence](#azure-document-intelligence) |
 
 Query parameter:
 - `include_raw=true`: sertakan output mentah model per halaman.
@@ -62,6 +63,22 @@ Contoh `category`: `title`, `text`, `table`, `image`, `image_caption`, `page_num
 
 Kode error: `413` (file/halaman melebihi batas), `422` (file kosong/rusak/salah tipe),
 `502` (vLLM mengembalikan error), `503` (vLLM tidak dapat dihubungi).
+
+### Azure Document Intelligence
+
+`/v1/ocr/azure` mengirim file ke Azure AI Document Intelligence (model `prebuilt-layout`, output
+markdown) sebagai alternatif Unlimited-OCR. Format respons sama dengan `/v1/ocr/pdf`; `bbox` diambil
+dari paragraf Azure dan dinormalisasi ke grid 0–999. Endpoint mengembalikan `503` sampai endpoint dan
+key diisi di `.env`:
+
+```bash
+OCR_AZURE_DI_ENDPOINT=https://<resource-name>.cognitiveservices.azure.com
+OCR_AZURE_DI_API_KEY=<key dari Azure Portal → Keys and Endpoint>
+```
+
+```bash
+curl -F file=@dokumen.pdf localhost:8200/v1/ocr/azure
+```
 
 ## Job untuk dokumen besar
 

@@ -5,6 +5,7 @@ from fastapi import APIRouter, File, Form, Path, Query, Response, UploadFile, st
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from app.api.dependencies import (
+    AzureOcrDep,
     JobServiceDep,
     OcrServiceDep,
     SettingsDep,
@@ -91,6 +92,19 @@ async def ocr_pdf(
     include_raw: IncludeRaw = False,
 ) -> OcrResponse:
     results = await service.recognize_pdf(content, strategy)
+    return OcrResponse.from_domain(file.filename, results, include_raw)
+
+
+@router.post("/v1/ocr/azure", response_model=OcrResponse, responses=_ERROR_RESPONSES, tags=["ocr"])
+async def ocr_azure(
+    azure: AzureOcrDep,
+    content: UploadContent,
+    file: Annotated[UploadFile, File(description="PDF, image (JPEG, PNG, BMP, TIFF, HEIF) or Office document")],
+    include_raw: IncludeRaw = False,
+) -> OcrResponse:
+    """Recognises the document with Azure AI Document Intelligence (prebuilt-layout) instead of
+    Unlimited-OCR. Returns one entry per page; bbox uses the same 0-999 grid."""
+    results = await azure.recognize(content)
     return OcrResponse.from_domain(file.filename, results, include_raw)
 
 
