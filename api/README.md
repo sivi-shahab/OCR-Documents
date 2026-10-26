@@ -13,7 +13,7 @@ curl localhost:8200/health
 Swagger UI: http://localhost:8200/docs
 
 Variabel compose: `VLLM_GPU` (default `0`), `VLLM_PORT` (`8100`), `API_PORT` (`8200`), `HF_CACHE_DIR` (`/data/hf-cache`).
-Konfigurasi aplikasi ada di `.env` (lihat `.env.example`; semua bersifat opsional).
+Konfigurasi aplikasi ada di `.env` di root repo (salin dari `.env.example` di root; semua bersifat opsional).
 
 > **Catatan revisi model.** Commit HF `8249d20` (14 Okt 2026) mengganti `model_type` menjadi `unlimited_ocr`,
 > sedangkan image vLLM ini mengenali `unlimited-ocr`. Akibatnya vLLM memuat remote code yang tidak
@@ -69,7 +69,7 @@ Kode error: `413` (file/halaman melebihi batas), `422` (file kosong/rusak/salah 
 `/v1/ocr/azure` mengirim file ke Azure AI Document Intelligence (model `prebuilt-layout`, output
 markdown) sebagai alternatif Unlimited-OCR. Format respons sama dengan `/v1/ocr/pdf`; `bbox` diambil
 dari paragraf Azure dan dinormalisasi ke grid 0–999. Endpoint mengembalikan `503` sampai endpoint dan
-key diisi di `.env`:
+key diisi di `.env` (root repo):
 
 ```bash
 OCR_AZURE_DI_ENDPOINT=https://<resource-name>.cognitiveservices.azure.com

@@ -5,10 +5,14 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# Repository root (api/app/core/config.py -> parents[3]); the shared .env lives there.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
 class Settings(BaseSettings):
     """Runtime configuration, read from environment variables prefixed with ``OCR_``."""
 
-    model_config = SettingsConfigDict(env_prefix="OCR_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="OCR_", env_file=REPO_ROOT / ".env", extra="ignore")
 
     # Upstream vLLM server
     vllm_base_url: str = "http://localhost:8100/v1"

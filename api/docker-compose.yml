@@ -42,7 +42,7 @@ services:
     environment:
       OCR_VLLM_BASE_URL: http://vllm:8000/v1
     env_file:
-      - path: .env
+      - path: ../.env
         required: false
     ports:
       - "${API_PORT:-8200}:8000"

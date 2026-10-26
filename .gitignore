@@ -35,3 +35,6 @@ log/
 Thumbs.db
 .vscode/
 .idea/
+
+# Local configuration (secrets)
+.env
