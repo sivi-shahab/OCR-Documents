@@ -21,6 +21,8 @@ def to_markdown(items: list[dict]) -> str:
     for item in items:
         if item.get("type") == "table":
             body = item.get("table_body", "")
+        elif "list_items" in item:
+            body = "\n".join(item["list_items"])
         else:
             body = item.get("text", "")
             if body and item.get("text_level"):
