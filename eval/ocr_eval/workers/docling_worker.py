@@ -6,7 +6,7 @@ import time
 from importlib.metadata import version
 from pathlib import Path
 
-from _common import parse_args, subset_pdf, write_meta, write_page
+from _common import anchor_grid, parse_args, subset_pdf, write_meta, write_page
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import EasyOcrOptions, PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
@@ -22,6 +22,14 @@ def pipeline_options(mode: str) -> PdfPipelineOptions:
     return PdfPipelineOptions(do_table_structure=True, do_ocr=True, ocr_options=ocr)
 
 
+def _grid(data) -> list[list[str]]:
+    cells = [
+        (c.text, c.start_row_offset_idx, c.end_row_offset_idx, c.start_col_offset_idx, c.end_col_offset_idx)
+        for c in data.table_cells
+    ]
+    return anchor_grid(cells, data.num_rows, data.num_cols)
+
+
 def main() -> None:
     args = parse_args(["auto", "ocr", "reference-tables"])
     start = time.perf_counter()
@@ -33,7 +41,7 @@ def main() -> None:
         doc = converter.convert(part).document
     if args.mode == "reference-tables":
         tables = [
-            {"page": args.pages[table.prov[0].page_no - 1], "grid": [[cell.text for cell in row] for row in table.data.grid]}
+            {"page": args.pages[table.prov[0].page_no - 1], "grid": _grid(table.data)}
             for table in doc.tables
             if table.prov
         ]

@@ -36,3 +36,15 @@ def write_page(out: Path, page: int, markdown: str) -> None:
 
 def write_meta(out: Path, **fields) -> None:
     (out / "worker_meta.json").write_text(json.dumps(fields, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def anchor_grid(cells: list[tuple[str, int, int, int, int]], num_rows: int, num_cols: int) -> list[list[str]]:
+    """Grid from (text, row_start, row_end, col_start, col_end) cells with exclusive ends.
+
+    A spanning cell's text is stored once, at its top row and rightmost column; the rest of its span is "".
+    """
+    grid = [[""] * num_cols for _ in range(num_rows)]
+    for text, r0, _r1, _c0, c1 in cells:
+        if 0 <= r0 < num_rows and 0 < c1 <= num_cols:
+            grid[r0][c1 - 1] = text
+    return grid

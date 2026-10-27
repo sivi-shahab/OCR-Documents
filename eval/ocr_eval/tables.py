@@ -25,7 +25,7 @@ class _TableState:
         self.cells: list[tuple[str, int, int]] | None = None
         self.text: list[str] | None = None
         self.span: tuple[int, int] = (1, 1)
-        self.pending: dict[int, list] = {}  # col -> [remaining rows, text]
+        self.pending: dict[int, int] = {}  # col -> rows still covered by a rowspan from above
 
     def end_cell(self) -> None:
         if self.text is not None and self.cells is not None:
@@ -39,19 +39,19 @@ class _TableState:
         row: list[str] = []
 
         def fill_pending() -> None:
-            while len(row) in self.pending:
-                entry = self.pending[len(row)]
-                row.append(entry[1])
-                entry[0] -= 1
-                if entry[0] <= 0:
-                    del self.pending[len(row) - 1]
+            while len(row) in self.pending:  # continuation of a rowspan: blank, the text sits at the anchor
+                col = len(row)
+                row.append("")
+                self.pending[col] -= 1
+                if self.pending[col] <= 0:
+                    del self.pending[col]
 
         for text, colspan, rowspan in self.cells:
             fill_pending()
-            for _ in range(colspan):
+            for i in range(colspan):  # a spanning cell's text is stored once, at its rightmost column
                 if rowspan > 1:
-                    self.pending[len(row)] = [rowspan - 1, text]
-                row.append(text)
+                    self.pending[len(row)] = rowspan - 1
+                row.append(text if i == colspan - 1 else "")
         while self.pending and max(self.pending) >= len(row):
             if len(row) in self.pending:
                 fill_pending()
@@ -151,7 +151,10 @@ def _pipe_tables(markdown: str) -> list[Grid]:
 
 
 def parse_tables(markdown: str) -> list[Grid]:
-    """HTML tables first, then pipe tables, each as a grid of cell texts (spans expanded)."""
+    """HTML tables first, then pipe tables, as grids of cell texts.
+
+    A spanning cell's text is stored once, at its top row and rightmost column; the rest of its span is "".
+    """
     return _html_tables(markdown) + _pipe_tables(markdown)
 
 
