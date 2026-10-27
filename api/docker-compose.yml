@@ -41,6 +41,8 @@ services:
     image: local/unlimited-ocr-api:latest
     environment:
       OCR_VLLM_BASE_URL: http://vllm:8000/v1
+      # .env may set a host-relative OCR_JOB_DIR; inside the container jobs live on the volume.
+      OCR_JOB_DIR: /data/jobs
     env_file:
       - path: ../.env
         required: false
