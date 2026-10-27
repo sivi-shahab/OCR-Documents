@@ -28,3 +28,26 @@ def test_page_without_amounts_is_excluded():
 
 def test_html_tags_ignored():
     assert score_numbers("1.234.567", "<td>1.234.567</td>").matched == 1
+
+
+def test_reference_negatives_are_parenthesised_only():
+    from ocr_eval.numbers import extract_reference_negatives
+
+    text = "Rugi (1.234.567)\n-\n  \n1.288.047.900.733\nModal dasar - 40.000.000.000\n-7.654.321"
+    assert dict(extract_reference_negatives(text)) == {"1234567": 1}
+
+
+def test_ocr_minus_must_touch_digits():
+    from ocr_eval.numbers import extract_negative_amounts
+
+    assert not extract_negative_amounts("\n-\n  \n1.288.047.900.733")
+    assert not extract_negative_amounts("Modal dasar - 40.000.000.000")
+    assert not extract_negative_amounts("2020-1.234.567")  # glued to a word/number: a range, not a sign
+    assert dict(extract_negative_amounts("(1.234.567) dan −7.654.321 dan -9.999.999")) == {
+        "1234567": 1, "7654321": 1, "9999999": 1,
+    }
+
+
+def test_minus_in_reference_is_not_a_negative():
+    s = score_numbers("Modal dasar - 40.000.000.000\n-\n1.288.047.900.733", "-40.000.000.000")
+    assert s.neg_reference == 0 and s.neg_matched == 0

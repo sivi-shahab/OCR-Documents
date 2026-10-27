@@ -9,7 +9,8 @@ _AMOUNT = r"\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d{7,}"
 _NUM = re.compile(_AMOUNT)
 AMOUNT_RE = _NUM
 _NEG_PAREN = re.compile(rf"\(\s*({_AMOUNT})\s*\)")
-_NEG_MINUS = re.compile(rf"(?<![\w.,])[-−]\s*({_AMOUNT})")
+# A minus sign counts only when it touches the digits: "Modal dasar - 40.000" or a lone "-" line is not a sign.
+_NEG_MINUS = re.compile(rf"(?<![\w.,])[-−](?=\d)({_AMOUNT})")
 _MIN_DIGITS = 7
 _MAX_MISREAD_DIFF = 2  # digits that may differ for two amounts to count as one misread
 _MAX_EXAMPLES = 4
@@ -53,7 +54,13 @@ def extract_amounts(text: str) -> Counter[str]:
     return _count(_NUM.findall(_TAG.sub(" ", text)))
 
 
+def extract_reference_negatives(text: str) -> Counter[str]:
+    """Negatives in the reference: amounts in parentheses only (financial statements write them that way)."""
+    return _count(_NEG_PAREN.findall(_TAG.sub(" ", text)))
+
+
 def extract_negative_amounts(text: str) -> Counter[str]:
+    """Negatives in OCR output: parenthesised, or with a minus sign directly before the digits."""
     text = _TAG.sub(" ", text)
     return _count(_NEG_PAREN.findall(text) + _NEG_MINUS.findall(text))
 
@@ -96,7 +103,7 @@ def score_numbers(reference_text: str, ocr_text: str) -> NumberScore | None:
     reference = extract_amounts(reference_text)
     if not reference:
         return None
-    return _score(reference, extract_negative_amounts(reference_text), ocr_text)
+    return _score(reference, extract_reference_negatives(reference_text), ocr_text)
 
 
 def score_numbers_against(reference: Counter[str], ocr_text: str) -> NumberScore:
