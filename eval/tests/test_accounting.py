@@ -1,3 +1,8 @@
+from pathlib import Path
+
+import pymupdf
+import pytest
+
 from ocr_eval.accounting import check_balance, check_totals
 
 
@@ -92,3 +97,36 @@ def test_total_without_amounts_above_is_uncheckable():
 def test_balance_column_count_mismatch_is_none():
     pages = {1: "Jumlah aset 5.000.000 4.000.000\nJumlah liabilitas dan ekuitas 5.000.000"}
     assert check_balance(pages) is None
+
+
+_BSD = Path(__file__).resolve().parents[2] / "tests" / "LK Bumi Serpong Damai.pdf"
+
+
+@pytest.mark.skipif(not _BSD.exists(), reason="BSD test PDF not available")
+def test_balance_on_bsd_text_layer():
+    # Text layer: label on its own line, each amount on a following line (with blank lines in between).
+    with pymupdf.open(_BSD) as doc:
+        pages = {n: doc[n - 1].get_text() for n in (4, 5)}
+    assert check_balance(pages) is True
+
+
+def test_balance_in_one_line_html_tables():
+    assets = "<table><tr><td>JUMLAH ASET</td><td>81.942.880.583.837</td><td>79.268.402.201.018</td>" \
+             "<td>TOTAL ASSETS</td></tr></table>"
+    equity = "<table><tr><td>Kas</td><td>1.000.000</td></tr><tr><td>JUMLAH LIABILITAS DAN EKUITAS</td>" \
+             "<td>81.942.880.583.837</td><td>79.268.402.201.018</td><td>TOTAL LIABILITIES AND EQUITY</td></tr></table>"
+    assert check_balance({4: assets, 5: equity}) is True
+    wrong = equity.replace("79.268.402.201.018", "79.268.402.201.999")
+    assert check_balance({4: assets, 5: wrong}) is False
+
+
+def test_balance_with_one_cell_per_line():
+    assets = "Aset lain-lain\n1.000.000\nJUMLAH ASET\n81.942.880.583.837\n\n79.268.402.201.018\nTOTAL ASSETS\n"
+    equity = "JUMLAH LIABILITAS DAN EKUITAS\n81.942.880.583.837\n79.268.402.201.018\nLihat catatan\n2.000.000"
+    assert check_balance({4: assets, 5: equity}) is True
+
+
+def test_balance_line_fallback_takes_columns_of_the_other_row():
+    assets = "| JUMLAH ASET | 5.000.000 | 4.000.000 |"
+    equity = "JUMLAH LIABILITAS DAN EKUITAS\n5.000.000\n4.000.000\n3.000.000"  # next row's amounts follow
+    assert check_balance({1: assets, 2: equity}) is True

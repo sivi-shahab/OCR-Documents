@@ -3,7 +3,7 @@ import re
 from dataclasses import dataclass, field
 
 from ocr_eval.numbers import AMOUNT_RE, normalize_amount, strip_tags
-from ocr_eval.tables import Grid
+from ocr_eval.tables import Grid, parse_tables
 
 _TOTAL_LABEL = re.compile(r"^(jumlah|total|sub ?total)\b", re.IGNORECASE)
 _AMOUNT_BODY = r"\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d{7,}(?:[.,]\d{1,2})?"
@@ -114,29 +114,89 @@ def check_totals(grids: list[Grid]) -> CheckSummary:
     return summary
 
 
-def _first_amounts(markdown: str, labels: set[str]) -> list[int] | None:
-    for line in markdown.splitlines():
-        line = re.sub(r"<[^>]*>", " | ", line)
+def _amounts_only(text: str) -> list[int] | None:
+    """The amounts of a cell or line that holds nothing but amounts ("-" is 0), else None."""
+    text = text.strip()
+    if not text:
+        return None
+    whole = parse_amount(text)
+    if whole is not None:
+        return [whole]
+    values = [parse_amount(token) for token in re.split(r"[\s|]+", text) if token]
+    return values if values and all(v is not None for v in values) else None
+
+
+def _is_label(text: str, labels: set[str]) -> bool:
+    """Every part of a (possibly bilingual "ID / EN") label is one of labels."""
+    parts = [re.sub(r"[^a-z ]", "", p.lower()).strip() for p in re.split(r"[/|\n]", text)]
+    parts = [" ".join(p.split()) for p in parts if p.strip()]
+    return bool(parts) and all(p in labels for p in parts)
+
+
+def _grid_amounts(markdown: str, labels: set[str]) -> list[int] | None:
+    for grid in parse_tables(markdown):
+        for row in grid:
+            amounts: list[int] = []
+            label_cells: list[str] = []
+            for cell in row:
+                values = _amounts_only(cell)
+                if values is not None:
+                    amounts += values
+                elif cell.strip() and not re.fullmatch(r"\s*\d{1,4}[a-z]?\s*", cell):  # note refs are not labels
+                    label_cells.append(cell)
+            if amounts and label_cells and all(_is_label(c, labels) for c in label_cells):
+                return amounts
+    return None
+
+
+def _line_amounts(markdown: str, labels: set[str]) -> tuple[list[int], bool] | None:
+    """(amounts, fixed): amounts on the label's own line (fixed), else the amount-only lines that follow it."""
+    lines = [re.sub(r"<[^>]*>", " | ", line) for line in markdown.splitlines()]
+    for i, line in enumerate(lines):
         first = re.search(r"\d", line)
         head = line[: first.start()] if first else line
-        parts = [re.sub(r"[^a-z ]", "", p.lower()).strip() for p in re.split(r"[/|]", head)]
-        parts = [p for p in parts if p]
-        if parts and all(p in labels for p in parts):
-            nums = [int(normalize_amount(n)) for n in AMOUNT_RE.findall(strip_tags(line[len(head):]))]
-            if nums:
-                return nums
+        if not _is_label(head, labels):
+            continue
+        nums = [int(normalize_amount(n)) for n in AMOUNT_RE.findall(strip_tags(line[len(head):]))]
+        if nums:
+            return nums, True
+        following: list[int] = []
+        for nxt in lines[i + 1 :]:
+            if not nxt.strip(" |\t"):
+                continue
+            values = _amounts_only(nxt.strip(" |\t"))
+            if values is None:
+                break
+            following += values
+        if following:
+            return following, False
     return None
+
+
+def _row_amounts(markdown: str, labels: set[str]) -> tuple[list[int], bool] | None:
+    amounts = _grid_amounts(markdown, labels)
+    return (amounts, True) if amounts else _line_amounts(markdown, labels)
 
 
 def check_balance(markdown_pages: dict[int, str]) -> bool | None:
     """Total assets equals total liabilities and equity in every amount column.
 
-    None when either row is absent or the two rows have a different number of amount columns.
+    The rows are looked up in parsed tables (HTML or pipe), else in the text: amounts on the label's line, or
+    the amount-only lines that follow it (text layers and one-cell-per-line output). Amounts taken from following
+    lines are cut to the column count of the other row when that one is known. None when either row is absent or
+    the two rows have a different number of amount columns.
     """
     assets = liabilities = None
     for _, md in sorted(markdown_pages.items()):
-        assets = assets or _first_amounts(md, _ASSETS)
-        liabilities = liabilities or _first_amounts(md, _LIABILITIES_EQUITY)
-    if not assets or not liabilities or len(assets) != len(liabilities):
+        assets = assets or _row_amounts(md, _ASSETS)
+        liabilities = liabilities or _row_amounts(md, _LIABILITIES_EQUITY)
+    if not assets or not liabilities:
         return None
-    return all(abs(a - b) <= 1 for a, b in zip(assets, liabilities))
+    (a, a_fixed), (b, b_fixed) = assets, liabilities
+    if a_fixed and not b_fixed:
+        b = b[: len(a)]
+    elif b_fixed and not a_fixed:
+        a = a[: len(b)]
+    if len(a) != len(b):
+        return None
+    return all(abs(x - y) <= 1 for x, y in zip(a, b))
