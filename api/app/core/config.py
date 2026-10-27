@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     azure_di_api_version: str = "2024-11-30"
     azure_di_timeout_seconds: float = Field(default=600, gt=0)
 
+    # Mistral OCR (/v1/ocr/mistral); the endpoint is off until the API key is set.
+    mistral_api_key: str = ""
+    mistral_base_url: str = "https://api.mistral.ai/v1"
+    mistral_ocr_model: str = "mistral-ocr-latest"
+    mistral_timeout_seconds: float = Field(default=600, gt=0)
+
     # Input limits
     max_upload_mb: int = Field(default=50, gt=0)
     max_pdf_pages: int = Field(default=200, gt=0)
@@ -83,6 +89,10 @@ class Settings(BaseSettings):
     @property
     def azure_enabled(self) -> bool:
         return bool(self.azure_di_endpoint and self.azure_di_api_key)
+
+    @property
+    def mistral_enabled(self) -> bool:
+        return bool(self.mistral_api_key)
 
     @property
     def max_engine_connections(self) -> int:

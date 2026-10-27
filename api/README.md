@@ -28,6 +28,7 @@ Konfigurasi aplikasi ada di `.env` di root repo (salin dari `.env.example` di ro
 | POST | `/v1/ocr/pdf` | OCR PDF secara sinkron (dokumen kecil, ≤ `OCR_MAX_PDF_PAGES`) |
 | POST | `/v1/ocr/jobs` | OCR PDF besar (300+ halaman) secara asinkron, lihat [Job untuk dokumen besar](#job-untuk-dokumen-besar) |
 | POST | `/v1/ocr/azure` | OCR PDF/gambar dengan Azure AI Document Intelligence, lihat [Azure Document Intelligence](#azure-document-intelligence) |
+| POST | `/v1/ocr/mistral` | OCR PDF/gambar dengan Mistral OCR, lihat [Mistral OCR](#mistral-ocr) |
 
 Query parameter:
 - `include_raw=true`: sertakan output mentah model per halaman.
@@ -78,6 +79,21 @@ OCR_AZURE_DI_API_KEY=<key dari Azure Portal → Keys and Endpoint>
 
 ```bash
 curl -F file=@dokumen.pdf localhost:8200/v1/ocr/azure
+```
+
+### Mistral OCR
+
+`/v1/ocr/mistral` mengirim file ke Mistral OCR API (model `mistral-ocr-latest`, output markdown) sebagai
+alternatif Unlimited-OCR. Format respons sama dengan `/v1/ocr/pdf`; `blocks` berisi region gambar yang
+dideteksi Mistral (`category: image`) dengan `bbox` di grid 0–999. Endpoint mengembalikan `503` sampai
+API key diisi di `.env`:
+
+```bash
+OCR_MISTRAL_API_KEY=<key dari console.mistral.ai → API Keys>
+```
+
+```bash
+curl -F file=@dokumen.pdf localhost:8200/v1/ocr/mistral
 ```
 
 ## Job untuk dokumen besar

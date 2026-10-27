@@ -12,6 +12,7 @@ from app.domain.ports import OcrEngine
 from app.infrastructure.azure_document_intelligence import AzureConfig, AzureDocumentIntelligence
 from app.infrastructure.image_loader import load_image
 from app.infrastructure.job_store import FileJobStore
+from app.infrastructure.mistral_ocr import MistralConfig, MistralOcr
 from app.infrastructure.pdf_renderer import PyMuPdfRenderer
 from app.infrastructure.vllm_engine import GenerationConfig, VllmOcrEngine
 from app.infrastructure.webhook import WebhookNotifier
@@ -43,6 +44,19 @@ def build_azure_ocr(settings: Settings, client: httpx.AsyncClient) -> AzureDocum
             model_id=settings.azure_di_model_id,
             api_version=settings.azure_di_api_version,
             timeout_seconds=settings.azure_di_timeout_seconds,
+        ),
+    )
+
+
+def build_mistral_ocr(settings: Settings, client: httpx.AsyncClient) -> MistralOcr | None:
+    if not settings.mistral_enabled:
+        return None
+    return MistralOcr(
+        client,
+        MistralConfig(
+            api_key=settings.mistral_api_key,
+            base_url=settings.mistral_base_url,
+            model=settings.mistral_ocr_model,
         ),
     )
 
@@ -94,9 +108,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ) as client,
             httpx.AsyncClient(timeout=10, follow_redirects=False) as webhook_client,
             httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as azure_client,
+            httpx.AsyncClient(
+                timeout=httpx.Timeout(settings.mistral_timeout_seconds, connect=10)
+            ) as mistral_client,
         ):
             engine = build_engine(settings, client)
             app.state.azure_ocr = build_azure_ocr(settings, azure_client)
+            app.state.mistral_ocr = build_mistral_ocr(settings, mistral_client)
             app.state.ocr_service = build_ocr_service(settings, engine)
             app.state.job_service = build_job_service(settings, engine, webhook_client)
             await app.state.job_service.start()

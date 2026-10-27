@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from app.api.dependencies import (
     AzureOcrDep,
     JobServiceDep,
+    MistralOcrDep,
     OcrServiceDep,
     SettingsDep,
     UploadContent,
@@ -105,6 +106,19 @@ async def ocr_azure(
     """Recognises the document with Azure AI Document Intelligence (prebuilt-layout) instead of
     Unlimited-OCR. Returns one entry per page; bbox uses the same 0-999 grid."""
     results = await azure.recognize(content)
+    return OcrResponse.from_domain(file.filename, results, include_raw)
+
+
+@router.post("/v1/ocr/mistral", response_model=OcrResponse, responses=_ERROR_RESPONSES, tags=["ocr"])
+async def ocr_mistral(
+    mistral: MistralOcrDep,
+    content: UploadContent,
+    file: Annotated[UploadFile, File(description="PDF or image (PNG/JPEG/WEBP; BMP/TIFF converted to PNG)")],
+    include_raw: IncludeRaw = False,
+) -> OcrResponse:
+    """Recognises the document with Mistral OCR instead of Unlimited-OCR. Returns one entry per
+    page; blocks list the image regions Mistral detects, with bbox on the same 0-999 grid."""
+    results = await mistral.recognize(content)
     return OcrResponse.from_domain(file.filename, results, include_raw)
 
 
