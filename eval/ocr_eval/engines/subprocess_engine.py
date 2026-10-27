@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import signal
 import subprocess
 import tempfile
 from collections.abc import AsyncIterator
@@ -15,6 +16,8 @@ from ocr_eval.store import PageOutput
 EVAL_DIR = Path(__file__).resolve().parents[2]
 CACHE_DIR = EVAL_DIR / ".cache"  # the root filesystem is small; every model download stays under /data
 _STDERR_TAIL = 2000
+CHUNK_PAGES = 25  # one worker call per chunk: a crash or timeout loses at most one chunk, and resume is per chunk
+CHUNK_TIMEOUT_SECONDS = 1800.0
 
 
 def worker_env(gpu: str) -> dict[str, str]:
@@ -36,11 +39,21 @@ def worker_env(gpu: str) -> dict[str, str]:
 class SubprocessEngine:
     paid_price_per_page = None
 
-    def __init__(self, name: str, python: Path, worker: Path, gpu: str = "1") -> None:
+    def __init__(
+        self,
+        name: str,
+        python: Path,
+        worker: Path,
+        gpu: str = "1",
+        chunk_size: int = CHUNK_PAGES,
+        timeout: float = CHUNK_TIMEOUT_SECONDS,
+    ) -> None:
         self.name = name
         self._python = Path(python)
         self._worker = Path(worker)
         self._gpu = gpu
+        self._chunk_size = chunk_size
+        self._timeout = timeout
         self._mode: str | None = None
         self._worker_meta: dict = {}
 
@@ -63,23 +76,42 @@ class SubprocessEngine:
 
     async def run(self, pdf: Path, pages: list[int], *, is_scan_variant: bool) -> AsyncIterator[PageOutput]:
         self._mode = "ocr" if is_scan_variant else "auto"
+        self._worker_meta = {}  # never report a previous run's model when every chunk of this one fails
+        for i in range(0, len(pages), self._chunk_size):
+            async for out in self._run_chunk(Path(pdf).resolve(), pages[i : i + self._chunk_size]):
+                yield out
+
+    async def _call_worker(self, pdf: Path, pages: list[int], out: Path) -> str | None:
+        """Runs the worker on one chunk; the error text, or None on success."""
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *self._command(pdf, pages, out, self._mode),
+                env=worker_env(self._gpu),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,  # its own process group, so a kill also reaches the worker's children
+            )
+        except OSError as exc:
+            return repr(exc)
+        try:
+            _, stderr = await asyncio.wait_for(process.communicate(), self._timeout)
+        except TimeoutError:
+            await _kill(process)
+            return f"{self.name} worker timeout after {self._timeout:g} s on pages {pages[0]}-{pages[-1]}"
+        except BaseException:  # cancelled: never leave a worker holding the GPU
+            await _kill(process)
+            raise
+        if process.returncode != 0:
+            tail = stderr.decode("utf-8", "replace")[-_STDERR_TAIL:]
+            return f"{self.name} worker exited with code {process.returncode}: {tail}"
+        if not (out / "worker_meta.json").exists():
+            return f"{self.name} worker exited without worker_meta.json"
+        return None
+
+    async def _run_chunk(self, pdf: Path, pages: list[int]) -> AsyncIterator[PageOutput]:
         with tempfile.TemporaryDirectory(prefix=f"{self.name}_", dir=CACHE_DIR if CACHE_DIR.exists() else None) as tmp:
             out = Path(tmp)
-            try:
-                process = await asyncio.create_subprocess_exec(
-                    *self._command(Path(pdf).resolve(), pages, out, self._mode),
-                    env=worker_env(self._gpu),
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                _, stderr = await process.communicate()
-            except OSError as exc:
-                error = repr(exc)
-            else:
-                error = None
-                if process.returncode != 0:
-                    tail = stderr.decode("utf-8", "replace")[-_STDERR_TAIL:]
-                    error = f"{self.name} worker exited with code {process.returncode}: {tail}"
+            error = await self._call_worker(pdf, pages, out)
             if error:
                 for number in pages:
                     yield PageOutput(number, "", None, error=error)
@@ -104,3 +136,11 @@ class SubprocessEngine:
             tail = result.stderr.decode("utf-8", "replace")[-_STDERR_TAIL:]
             raise RuntimeError(f"{self.name} reference-tables exited with code {result.returncode}: {tail}")
         return json.loads((out / "tables.json").read_text(encoding="utf-8"))
+
+
+async def _kill(process: asyncio.subprocess.Process) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    await process.wait()
