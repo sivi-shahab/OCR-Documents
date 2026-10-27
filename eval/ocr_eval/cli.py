@@ -56,7 +56,7 @@ def build_engines(names: list[str]) -> list[Engine]:
         raise SystemExit(f"engine tidak dikenal: {', '.join(sorted(unknown))} (pilihan: {','.join(ALL_ENGINES)})")
     settings = Settings()
     factories = {
-        "unlimited": lambda: UnlimitedEngine(settings.vllm_base_url),
+        "unlimited": lambda: UnlimitedEngine(settings),
         "azure": lambda: AzureEngine(settings),
         "mistral": lambda: MistralEngine(settings),
         "docling": lambda: _subprocess_engine("docling"),

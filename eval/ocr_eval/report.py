@@ -5,6 +5,7 @@ from pathlib import Path
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 
 from ocr_eval.score import COLUMNS, TABLE_REFERENCE_ENGINE, PageRow, Summary, load_json
 
@@ -49,7 +50,8 @@ def standard_notes(
         ),
         (
             "Rasio dihitung dari total agregat (Σ cocok / Σ acuan), bukan rata-rata per halaman; halaman tanpa angka "
-            "≥7 digit dikecualikan dari akurasi angka. `negative_recall` (angka dalam kurung/minus) hanya dihitung "
+            "≥7 digit dikecualikan dari akurasi angka. `negative_recall` (acuan: angka dalam kurung; di output engine, "
+            "kurung atau tanda minus yang menempel pada angka) hanya dihitung "
             "terhadap text layer (kolom `digital` dan `synthetic_scan`). `totals_pass_rate` = lolos / (lolos + gagal); "
             "tabel yang tidak bisa dicek dihitung terpisah di `totals_uncheckable`."
         ),
@@ -69,8 +71,18 @@ def standard_notes(
         (
             f"Biaya self-hosted = jam GPU × US${gpu_hour_rate:.2f}/jam (1 GPU per engine), dengan asumsi utilisasi penuh "
             "dan belum termasuk biaya operasional. Biaya API: Azure Layout US$10/1.000 halaman, Mistral OCR US$4/1.000 "
-            "halaman. Waktu per halaman = wall-clock run dibagi rata ke halamannya"
+            "halaman. Waktu per halaman (untuk `pages_per_minute` dan biaya GPU) = total wall-clock semua run engine itu "
+            "(termasuk run yang terputus dan dilanjutkan) dibagi jumlah halaman yang diproses selama diukur"
             + (f"; Unlimited-OCR berjalan dengan konkurensi {', '.join(concurrency)}." if concurrency else ".")
+        ),
+        (
+            "Latensi `median_seconds`/`p95_seconds` benar-benar per halaman hanya untuk Unlimited-OCR (satu request per "
+            "halaman). Engine lain memproses satu dokumen/chunk per panggilan, sehingga waktu per halamannya adalah "
+            "waktu chunk/worker dibagi rata ke halamannya; median dan p95 mereka tidak menggambarkan sebaran latensi."
+        ),
+        (
+            "`truncated` (finish_reason=length, output terpotong di batas token) adalah satu-satunya proksi untuk "
+            "generasi berulang (loop); loop yang berhenti sebelum batas token tidak terdeteksi."
         ),
         "MinerU berlisensi AGPL: pemakaian produksi perlu dicek legal terlebih dulu.",
         f"Engine dilewati: {skipped_text}.",
@@ -161,6 +173,11 @@ def _classification(rows: list[PageRow], out_dir: Path) -> list[list]:
     return [list(item) for item in sorted(seen)]
 
 
+def _cell_value(value):
+    """Control characters (e.g. ANSI escapes in an error message) make openpyxl refuse the cell."""
+    return ILLEGAL_CHARACTERS_RE.sub("", value) if isinstance(value, str) else value
+
+
 def _sheet(book: Workbook, title: str, headers: list[str], rows: list[list], first: bool = False) -> None:
     sheet = book.active if first else book.create_sheet()
     sheet.title = title
@@ -168,7 +185,7 @@ def _sheet(book: Workbook, title: str, headers: list[str], rows: list[list], fir
     for cell in sheet[1]:
         cell.font = Font(bold=True)
     for row in rows:
-        sheet.append(row)
+        sheet.append([_cell_value(value) for value in row])
     sheet.freeze_panes = "A2"
 
 

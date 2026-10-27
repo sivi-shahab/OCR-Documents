@@ -87,13 +87,21 @@ merespons, venv tidak ada).
 ```bash
 cd eval
 .venv/bin/python -m ocr_eval all \
-  --out ../reports/ocr_eval_$(date +%F) \
+  --out ../reports/ocr_eval_2026-10-27 \
   --pdf "../tests/LK Bumi Serpong Damai.pdf" --pdf "../tests/PT Hutama Karya.pdf"
 ```
 
-Tanpa `--yes`, `run` dan `all` hanya mencetak estimasi biaya API berbayar (halaman yang belum di-cache × harga) lalu
-keluar dengan kode 2 **sebelum menjalankan apa pun**, termasuk engine self-hosted. Ulangi dengan `--yes` setelah
-estimasi disetujui. Run dapat dilanjutkan: halaman yang sudah di-cache tidak diproses (dan tidak ditagih) ulang.
+Pakai folder `--out` yang **tetap** (seperti di atas), jangan `$(date +%F)`: memakai ulang folder yang sama
+melanjutkan run dari cache. Halaman yang sudah tersimpan di `runs/` tidak diproses (dan tidak ditagih) ulang; hanya
+halaman yang belum ada atau yang sebelumnya gagal yang dijalankan lagi. Folder baru berarti semua halaman diproses
+dan API berbayar ditagih lagi dari awal. Docling dan MinerU dijalankan per 25 halaman (batas waktu 30 menit per
+chunk), jadi crash atau timeout paling banyak menghilangkan satu chunk.
+
+Gerbang `--yes`: tanpa `--yes`, `run` mencetak estimasi biaya API berbayar lalu keluar dengan kode 2 **sebelum
+menjalankan engine apa pun** (termasuk engine self-hosted) — tetapi hanya jika ada engine berbayar yang siap (key
+terisi) dan masih punya halaman yang belum di-cache atau gagal. Jika semua halaman berbayar sudah di-cache, atau
+tidak ada engine berbayar yang siap, `run` langsung berjalan tanpa `--yes`. `all` tetap menjalankan `classify` dan
+`degrade` lebih dulu (cepat, tanpa engine) sebelum gerbang ini. Ulangi dengan `--yes` setelah estimasi disetujui.
 
 | Perintah | Fungsi |
 |---|---|
@@ -108,10 +116,11 @@ Opsi umum: `--out DIR` (wajib), `--pdf PDF` (boleh berulang; wajib kecuali `repo
 (default `unlimited,azure,mistral,docling,mineru`), `--gpu-hour-rate` (US$/jam GPU, default 0.95), `--yes`.
 Contoh tanpa engine berbayar: `--engines unlimited,docling,mineru`.
 
-Hasil ada di `reports/ocr_eval_<YYYY-MM-DD>/` dan **tidak di-commit** (sama seperti laporan uji sebelumnya).
-Isinya: `ocr_eval.xlsx` (sheet Summary, Pages, Worst pages, Classification, Notes), `summary.md`, `scores.json`,
-`classification.json`, `skipped_engines.json`, `reference_tables.json`, `synthetic/`, dan `runs/` (cache per
-halaman beserta `meta.json`).
+Hasil ada di folder `--out` (mis. `reports/ocr_eval_2026-10-27/`) dan **tidak di-commit** (sama seperti laporan uji
+sebelumnya). Isinya: `ocr_eval.xlsx` (sheet Summary, Pages, Worst pages, Classification, Notes), `summary.md`,
+`scores.json`, `classification.json`, `synthetic_map.json` (halaman scan sintetis → halaman asal), `skipped_engines.json`,
+`reference_tables.json`, `synthetic/`, dan `runs/` (cache per halaman beserta `meta.json`, termasuk `wall_seconds`
+dan `timed_pages` yang terakumulasi lintas run yang dilanjutkan).
 
 ## Kolom laporan
 
@@ -134,7 +143,7 @@ dikecualikan dari akurasi angka.
 | `pages` | Jumlah halaman yang dinilai pada kolom itu |
 | `amount_recall` | Angka acuan yang ditemukan di output engine / semua angka acuan |
 | `misread_rate` | Angka acuan yang terbaca salah (ada angka serupa tetapi tidak sama) / semua angka acuan |
-| `negative_recall` | Recall khusus angka negatif (dalam kurung atau minus); hanya terhadap text layer (`digital`, `synthetic_scan`) |
+| `negative_recall` | Recall khusus angka negatif: acuan = angka dalam kurung di text layer; di output engine, kurung atau tanda minus yang menempel pada angka (`-1.234.567`) dihitung. Hanya `digital` dan `synthetic_scan` |
 | `median_dice` | Median kemiripan kata (koefisien Dice) halaman terhadap text layer |
 | `english_skipped_pages` | Halaman yang tidak dinilai cakupan teks Inggrisnya |
 | `column_placement` | Metrik kolom utama: angka acuan yang ditaruh di kolom tabel yang sama (dihitung dari kanan) / angka acuan yang ditemukan di tabel engine. Hanya mengukur pergeseran kolom |
@@ -143,7 +152,7 @@ dikecualikan dari akurasi angka.
 | `totals_uncheckable` | Jumlah tabel yang tidak bisa dicek (dihitung terpisah dari `totals_pass_rate`) |
 | `consensus_recall` | Khusus `real_scan`: angka yang dibaca sama oleh mayoritas engine yang juga ada di output engine ini |
 | `empty_pages`, `truncated_pages`, `error_pages` | Halaman kosong, terpotong, dan gagal |
-| `pages_per_minute`, `median_seconds`, `p95_seconds` | Kecepatan; waktu per halaman = wall-clock run dibagi rata ke halamannya |
+| `pages_per_minute`, `median_seconds`, `p95_seconds` | Kecepatan; waktu per halaman = total wall-clock run / halaman yang diproses selama diukur. Median/p95 benar-benar per halaman hanya untuk Unlimited-OCR; engine lain = waktu chunk/worker dibagi rata |
 | `cost_usd` | Biaya total halaman yang dinilai: API = harga per halaman; self-hosted = jam GPU × `--gpu-hour-rate` |
 
 Metrik yang tidak berlaku pada suatu kolom kosong (–). Docling tidak dinilai kolom tabelnya di `digital`
@@ -164,6 +173,8 @@ salah/hilang), dan **Notes** semua catatan di bawah.
 - **MinerU berlisensi AGPL.** Pemakaian produksi perlu dicek legal terlebih dulu.
 - **EasyOCR lemah pada pemisah ribuan.** OCR bawaan Docling (EasyOCR) cenderung salah membaca pemisah ribuan
   (titik/koma) pada angka, sehingga recall angkanya bisa rendah pada gambar scan.
+- **Deteksi loop.** `truncated` (finish_reason=length) adalah satu-satunya proksi generasi berulang; loop yang berhenti
+  sebelum batas token tidak terdeteksi.
 - `real_scan` tanpa kunci jawaban: `consensus_recall` dan `totals_pass_rate` hanya indikator tidak langsung.
 - Engine yang hanya dinilai pada sebagian halaman ditandai "Cakupan tidak lengkap" di Notes; angkanya tidak sebanding
   penuh dengan engine lain.

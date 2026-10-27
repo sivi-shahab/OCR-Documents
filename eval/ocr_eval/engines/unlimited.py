@@ -8,13 +8,13 @@ from pathlib import Path
 
 import httpx
 import pymupdf
+from app.core.config import Settings
 from app.domain.models import PageImage
 from app.domain.parser import parse_blocks, to_markdown
 from app.infrastructure.vllm_engine import GenerationConfig, VllmOcrEngine
 
 from ocr_eval.store import PageOutput
 
-_CONFIG = GenerationConfig("Unlimited-OCR", 8192, 35, 128, 1024)
 _TIMEOUT = httpx.Timeout(600.0, connect=10.0)
 
 
@@ -24,30 +24,44 @@ class UnlimitedEngine:
 
     def __init__(
         self,
-        base_url: str = "http://localhost:8100/v1",
+        settings: Settings | None = None,
+        *,
+        base_url: str | None = None,
         concurrency: int = 32,
         dpi: int = 200,
         transport: httpx.AsyncBaseTransport | httpx.BaseTransport | None = None,
     ) -> None:
-        self._base_url = base_url
+        """Model and generation parameters come from the API's Settings (OCR_* in .env), as in production.
+
+        base_url defaults to Settings.vllm_base_url, whose own default is the host's vLLM, http://localhost:8100/v1.
+        """
+        settings = settings or Settings()
+        self.config = GenerationConfig(
+            settings.model_name,
+            settings.max_tokens,
+            settings.ngram_size,
+            settings.single_image_window,
+            settings.multi_image_window,
+        )
+        self.base_url = base_url or settings.vllm_base_url
         self._concurrency = concurrency
         self._dpi = dpi
         self._transport = transport
 
     def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(base_url=self._base_url, timeout=_TIMEOUT, transport=self._transport)
+        return httpx.AsyncClient(base_url=self.base_url, timeout=_TIMEOUT, transport=self._transport)
 
     def available(self) -> str | None:
         # Synchronous httpx so it is safe to call from inside a running event loop.
         try:
-            with httpx.Client(base_url=self._base_url, timeout=10.0, transport=self._transport) as client:
+            with httpx.Client(base_url=self.base_url, timeout=10.0, transport=self._transport) as client:
                 healthy = client.get("/models").is_success
         except httpx.HTTPError:
             healthy = False
-        return None if healthy else f"vLLM tidak merespons di {self._base_url}"
+        return None if healthy else f"vLLM tidak merespons di {self.base_url}"
 
     def meta_info(self) -> dict:
-        return {"model": _CONFIG.model_name, "concurrency": self._concurrency, "dpi": self._dpi}
+        return {"model": self.config.model_name, "concurrency": self._concurrency, "dpi": self._dpi}
 
     async def run(self, pdf: Path, pages: list[int], *, is_scan_variant: bool) -> AsyncIterator[PageOutput]:
         semaphore = asyncio.Semaphore(self._concurrency)
@@ -60,7 +74,7 @@ class UnlimitedEngine:
             return PageImage(png, "image/png")
 
         async with self._client() as client:
-            engine = VllmOcrEngine(client, _CONFIG)
+            engine = VllmOcrEngine(client, self.config)
 
             async def one(number: int) -> PageOutput:
                 async with semaphore:

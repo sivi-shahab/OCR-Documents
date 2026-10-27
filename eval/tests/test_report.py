@@ -64,5 +64,18 @@ def test_report_files(tmp_path):
     for required in ("`digital`", "`synthetic_scan`", "bias", "utilisasi penuh", "biaya operasional", "AGPL",
                      "legal", "azure: OCR_AZURE_DI_API_KEY kosong", "Unlimited-OCR", "docling (EasyOCR + TableFormer) 2.143.0",
                      "mistral-ocr-latest", "7 angka acuan",
-                     "`column_placement`", "`column_end_to_end`"):  # fmt: skip
+                     "`column_placement`", "`column_end_to_end`", "`median_seconds`/`p95_seconds`",
+                     "hanya untuk Unlimited-OCR", "`truncated`", "finish_reason=length", "satu-satunya"):  # fmt: skip
         assert required in text, required
+
+
+def test_illegal_characters_are_stripped(tmp_path):
+    rows = [_row("digital", "unlimited", 1, 5, error="engine said \x1b[31mboom\x00")]
+    rows[0].number.dropped_examples = ["12\x1b34567"]
+    write_report(rows, summarize(rows, {}, 0.95), tmp_path, ["catatan \x1b"])
+    book = openpyxl.load_workbook(tmp_path / "ocr_eval.xlsx")
+    pages = list(book["Pages"].iter_rows(values_only=True))
+    assert "engine said [31mboom" in pages[1]
+    worst = list(book["Worst pages"].iter_rows(values_only=True))
+    assert "1234567" in worst[1] and "engine said [31mboom" in worst[1]
+    assert [r[0] for r in book["Notes"].iter_rows(values_only=True)] == ["note", "catatan "]

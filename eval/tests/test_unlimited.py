@@ -1,4 +1,6 @@
 import httpx
+from app.core.config import Settings
+from app.infrastructure.vllm_engine import GenerationConfig
 
 from ocr_eval.engines.unlimited import UnlimitedEngine
 
@@ -53,5 +55,21 @@ async def test_available_works_inside_running_loop():
 
 
 async def test_meta_info():
-    info = UnlimitedEngine(concurrency=5, dpi=150).meta_info()
+    info = UnlimitedEngine(Settings(_env_file=None), concurrency=5, dpi=150).meta_info()
     assert info == {"model": "Unlimited-OCR", "concurrency": 5, "dpi": 150}
+
+
+def test_generation_config_and_url_come_from_settings(digital_pdf):
+    settings = Settings(
+        _env_file=None, model_name="uocr-test", max_tokens=111, ngram_size=7, single_image_window=8,
+        multi_image_window=9, vllm_base_url="http://vllm.example:9000/v1",
+    )  # fmt: skip
+    engine = UnlimitedEngine(settings)
+    assert engine.config == GenerationConfig("uocr-test", 111, 7, 8, 9)
+    assert engine.meta_info()["model"] == "uocr-test"
+    assert engine.base_url == "http://vllm.example:9000/v1"
+    assert UnlimitedEngine(settings, base_url="http://other:1/v1").base_url == "http://other:1/v1"
+
+
+def test_default_url_is_the_host_vllm():
+    assert UnlimitedEngine(Settings(_env_file=None)).base_url == "http://localhost:8100/v1"
