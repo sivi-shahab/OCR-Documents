@@ -9,8 +9,8 @@ from openpyxl.styles import Font
 from ocr_eval.score import COLUMNS, TABLE_REFERENCE_ENGINE, PageRow, Summary, load_json
 
 _WORST_PER_GROUP = 20
-_RATIOS = {"amount_recall", "misread_rate", "negative_recall", "median_dice", "column_accuracy", "totals_pass_rate",
-           "consensus_recall"}  # fmt: skip
+_RATIOS = {"amount_recall", "misread_rate", "negative_recall", "median_dice", "column_placement",
+           "column_end_to_end", "totals_pass_rate", "consensus_recall"}  # fmt: skip
 _NOT_SCORED = "n/a (acuan)"
 
 
@@ -54,8 +54,10 @@ def standard_notes(
             "tabel yang tidak bisa dicek dihitung terpisah di `totals_uncheckable`."
         ),
         (
-            "`column_accuracy` = angka acuan yang muncul di tabel engine pada kolom yang sama (dihitung dari kanan) / "
-            "semua angka di tabel acuan. Acuan struktur tabel adalah Docling dari PDF digital dengan isi sel dari text "
+            "`column_placement` (metrik kolom utama) = angka acuan yang ditaruh engine di kolom tabel yang sama "
+            "(dihitung dari kanan) / angka acuan yang ditemukan di tabel engine; mengukur pergeseran kolom saja. "
+            "`column_end_to_end` = angka di kolom yang benar / semua angka di tabel acuan; angka yang hilang atau tidak "
+            "di dalam tabel ikut menurunkannya. Acuan struktur tabel adalah Docling dari PDF digital dengan isi sel dari text "
             "layer, sehingga metrik ini bergantung pada kualitas struktur tabel Docling. Sel acuan yang berisi lebih dari "
             f"satu angka (sel tergabung, kolomnya ambigu) dikecualikan: {excluded_reference_amounts} angka acuan "
             "dikecualikan."
@@ -88,7 +90,11 @@ def _summary_values(s: Summary) -> list:
     values = []
     for f in fields(Summary):
         value = getattr(s, f.name)
-        if f.name == "column_accuracy" and s.engine == TABLE_REFERENCE_ENGINE and s.column == "digital":
+        if (
+            f.name in ("column_placement", "column_end_to_end")
+            and s.engine == TABLE_REFERENCE_ENGINE
+            and s.column == "digital"
+        ):
             value = _NOT_SCORED
         values.append(value)
     return values

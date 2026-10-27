@@ -55,7 +55,8 @@ class Summary:
     negative_recall: float | None
     median_dice: float | None
     english_skipped_pages: int
-    column_accuracy: float | None
+    column_placement: float | None  # placed in the right column / found in an OCR table
+    column_end_to_end: float | None  # placed in the right column / all reference table amounts
     totals_pass_rate: float | None
     consensus_recall: float | None
     empty_pages: int
@@ -170,7 +171,8 @@ def score_run(run_dir: Path, pdfs: list[Path]) -> list[PageRow]:
                                         check_totals(raw_grids[page]), None, False, False, None, None))  # fmt: skip
                 continue
             on_page = {engine: pages[page] for engine, pages in outputs.items() if page in pages}
-            agreed = consensus({engine: out.markdown for engine, out in on_page.items()})
+            # A failed page has no reading to vote with; it is still scored (as empty) against the others.
+            agreed = consensus({engine: out.markdown for engine, out in on_page.items() if not out.error})
             for engine, out in on_page.items():
                 rows.append(_row(
                     "real_scan", doc, page, engine, kind, out,
@@ -212,6 +214,31 @@ def balance_checks(run_dir: Path, pdfs: list[Path]) -> dict[str, dict[str, bool 
     return result
 
 
+def coverage_gaps(rows: list[PageRow], classification: dict, synthetic_map: dict) -> list[tuple[str, str, int, int]]:
+    """(engine, column, scored pages, expected pages) wherever an engine was scored on fewer pages than exist.
+
+    Expected pages count every scored document: digital and other pages from classification, synthetic pages
+    from synthetic_map. Failed pages are scored (as empty), so only pages without any cached output are gaps.
+    """
+    docs = {r.document for r in rows}
+    expected = dict.fromkeys(COLUMNS, 0)
+    for doc in docs:
+        kinds = classification.get(doc, {}).values()
+        expected["digital"] += sum(k == PageKind.DIGITAL for k in kinds)
+        expected["real_scan"] += sum(k != PageKind.DIGITAL for k in kinds)
+        expected["synthetic_scan"] += len(synthetic_map.get(doc, {}))
+    scored: dict[tuple[str, str], set[tuple[str, int]]] = {}
+    for r in rows:
+        scored.setdefault((r.engine, r.column), set()).add((r.document, r.page))
+    engines = sorted({r.engine for r in rows} - {REFERENCE_ENGINE})
+    return [
+        (engine, column, len(scored.get((engine, column), ())), expected[column])
+        for engine in engines
+        for column in COLUMNS
+        if len(scored.get((engine, column), ())) < expected[column]
+    ]
+
+
 def _ratio(numerator: float, denominator: float) -> float | None:
     return numerator / denominator if denominator else None
 
@@ -234,18 +261,23 @@ def _summarize_group(column: str, engine: str, rows: list[PageRow], metas: dict,
     seconds = [r.seconds for r in rows if r.seconds is not None]
     passed, failed = sum(t.passed for t in totals), sum(t.failed for t in totals)
 
-    # Each page gets an equal share of its run's wall-clock time; paid engines are billed per page.
+    # Each page gets an equal share of its run's wall-clock time. Paid engines are billed per scored page, so
+    # their cost needs only the price (an interrupted run may lack wall_seconds); self-hosted cost is GPU time.
     wall = cost = 0.0
-    timed = 0
+    timed = costed = 0
     for r in rows:
-        meta = metas.get((variant_of(column), r.document, engine))
-        if not meta or not meta.get("wall_seconds") or not meta.get("pages"):
-            continue
-        share = meta["wall_seconds"] / len(meta["pages"])
-        wall += share
-        timed += 1
+        meta = metas.get((variant_of(column), r.document, engine)) or {}
+        share = meta["wall_seconds"] / len(meta["pages"]) if meta.get("wall_seconds") and meta.get("pages") else None
+        if share is not None:
+            wall += share
+            timed += 1
         price = meta.get("price_per_page")
-        cost += price if price is not None else share / 3600 * gpu_hour_rate
+        if price is not None:
+            cost += price
+            costed += 1
+        elif share is not None:
+            cost += share / 3600 * gpu_hour_rate
+            costed += 1
 
     return Summary(
         column=column,
@@ -256,7 +288,8 @@ def _summarize_group(column: str, engine: str, rows: list[PageRow], metas: dict,
         negative_recall=_ratio(sum(n.neg_matched for n in numbers), sum(n.neg_reference for n in numbers)),
         median_dice=statistics.median(dice) if dice else None,
         english_skipped_pages=sum(r.english is None for r in rows if _text_scored_row(r)),
-        column_accuracy=_ratio(sum(c.placed_correctly for c in columns), sum(c.reference for c in columns)),
+        column_placement=_ratio(sum(c.placed_correctly for c in columns), sum(c.found_in_table for c in columns)),
+        column_end_to_end=_ratio(sum(c.placed_correctly for c in columns), sum(c.reference for c in columns)),
         totals_pass_rate=_ratio(passed, passed + failed),
         consensus_recall=_ratio(sum(n.matched for n in agreed), sum(n.reference for n in agreed)),
         empty_pages=sum(r.empty for r in rows),
@@ -265,7 +298,7 @@ def _summarize_group(column: str, engine: str, rows: list[PageRow], metas: dict,
         pages_per_minute=timed / wall * 60 if wall else None,
         median_seconds=statistics.median(seconds) if seconds else None,
         p95_seconds=_p95(seconds) if seconds else None,
-        cost_usd=cost if timed else None,
+        cost_usd=cost if costed else None,
         totals_uncheckable=sum(t.uncheckable for t in totals),
     )
 

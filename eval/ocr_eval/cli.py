@@ -22,6 +22,7 @@ from ocr_eval.score import (
     SYNTHETIC,
     balance_checks,
     clean_reference_grids,
+    coverage_gaps,
     load_json,
     rows_from_json,
     rows_to_json,
@@ -182,18 +183,16 @@ def cmd_run(args, engine_factory: EngineFactory, reference=None) -> int:
             ready.append(engine)
 
     paid = [e for e in ready if e.paid_price_per_page is not None]
-    blocked = False
     if paid:
         estimate = _estimate(paid, store, jobs)
-        if not args.yes:
-            for engine in paid:
-                todo, cost = estimate[engine.name]
-                if todo:
-                    blocked = True
-                    ready.remove(engine)
-                    skipped[engine.name] = f"tidak dijalankan tanpa --yes (estimasi US${cost:.2f})"
-            if blocked:
-                print("Engine berbayar tidak dipanggil; ulangi dengan --yes untuk menjalankannya.", flush=True)
+        if not args.yes and any(todo for todo, _ in estimate.values()):
+            # Nothing starts, self-hosted engines included, so the decision comes before hours of GPU work.
+            print(
+                "Tidak ada engine yang dijalankan. Ulangi dengan --yes untuk memanggil API berbayar, atau dengan "
+                f"--engines tanpa engine berbayar ({', '.join(e.name for e in paid)}).",
+                flush=True,
+            )
+            return 2
     _write_json(args.out / "skipped_engines.json", skipped)
 
     lanes: dict[str, list] = {}
@@ -228,8 +227,6 @@ def cmd_run(args, engine_factory: EngineFactory, reference=None) -> int:
             lanes.setdefault(lane, []).append((f"{engine.name} {variant}/{pdf.stem} ({todo} hlm)", step))
 
     failures = asyncio.run(_run_lanes(lanes))
-    if blocked:
-        return 2
     return 1 if failures else 0
 
 
@@ -251,8 +248,12 @@ def _metas(runs: Path) -> dict[tuple[str, str, str], dict]:
     }
 
 
-def _extra_notes(out: Path, balance: dict) -> list[str]:
+def _extra_notes(out: Path, balance: dict, gaps: list[tuple[str, str, int, int]], skipped: dict) -> list[str]:
     notes = []
+    for engine, column, scored, expected in gaps:
+        reason = f" (alasan: {skipped[engine]})" if engine in skipped else ""
+        notes.append(f"Cakupan tidak lengkap: {engine} di kolom `{column}` dinilai pada {scored} dari {expected} "
+                     f"halaman{reason}; angkanya tidak sebanding penuh dengan engine lain.")  # fmt: skip
     labels = {True: "lolos", False: "gagal", None: "tidak bisa dicek"}
     for doc, checks in sorted(balance.items()):
         if checks:
@@ -263,7 +264,7 @@ def _extra_notes(out: Path, balance: dict) -> list[str]:
     missing = [doc for doc, pages in sorted(classification.items())
                if PageKind.DIGITAL in pages.values() and doc not in references]  # fmt: skip
     if missing:
-        notes.append(f"Tabel acuan tidak ada untuk: {', '.join(missing)}; `column_accuracy` tidak dihitung di sana.")
+        notes.append(f"Tabel acuan tidak ada untuk: {', '.join(missing)}; metrik kolom tabel tidak dihitung di sana.")
     return notes
 
 
@@ -271,14 +272,19 @@ def cmd_report(args) -> int:
     scores = _require(args.out / "scores.json", "score")
     rows = rows_from_json(scores["rows"])
     metas = _metas(args.out / "runs")
-    scored_engines = {r.engine for r in rows}
+    classification = load_json(args.out / "classification.json", {})
+    gaps = coverage_gaps(rows, classification, load_json(args.out / "synthetic_map.json", {}))
+    # A skip reason stays relevant while the engine has no rows, or fewer rows than expected somewhere.
+    complete = {r.engine for r in rows}.difference(engine for engine, *_ in gaps)
     skipped = {e: reason for e, reason in load_json(args.out / "skipped_engines.json", {}).items()
-               if e not in scored_engines}  # fmt: skip
+               if e not in complete}  # fmt: skip
     excluded = sum(
         clean_reference_grids([entry["grid"] for entry in entries])[1]
         for entries in load_json(args.out / "reference_tables.json", {}).values()
     )
-    notes = standard_notes(metas, skipped, excluded, args.gpu_hour_rate) + _extra_notes(args.out, scores["balance"])
+    notes = standard_notes(metas, skipped, excluded, args.gpu_hour_rate) + _extra_notes(
+        args.out, scores["balance"], gaps, skipped
+    )
     write_report(rows, summarize(rows, metas, args.gpu_hour_rate), args.out, notes)
     print(f"Laporan: {args.out / 'ocr_eval.xlsx'} dan {args.out / 'summary.md'}", flush=True)
     return 0
@@ -288,6 +294,8 @@ def cmd_all(args, engine_factory: EngineFactory, reference=None) -> int:
     cmd_classify(args)
     cmd_degrade(args)
     code = cmd_run(args, engine_factory, reference)
+    if code == 2:
+        return code
     cmd_score(args)
     cmd_report(args)
     return code

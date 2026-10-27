@@ -46,8 +46,11 @@ def test_report_files(tmp_path):
     unlimited_worst = [r for r in worst[1:] if r[1] == "unlimited"]
     assert len(unlimited_worst) == 20
     assert any("1234567" in str(cell) for cell in worst[1])
-    summary_cells = [c for r in book["Summary"].iter_rows(values_only=True) for c in r]
-    assert "n/a (acuan)" in summary_cells
+    summary = list(book["Summary"].iter_rows(values_only=True))
+    header = summary[0]
+    docling_digital = next(r for r in summary[1:] if r[:2] == ("digital", "docling"))
+    for name in ("column_placement", "column_end_to_end"):
+        assert docling_digital[header.index(name)] == "n/a (acuan)"
     classification = list(book["Classification"].iter_rows(values_only=True))
     assert ("doc", 3, "scan") in classification
 
@@ -60,5 +63,6 @@ def test_report_files(tmp_path):
     text = "\n".join(notes)
     for required in ("`digital`", "`synthetic_scan`", "bias", "utilisasi penuh", "biaya operasional", "AGPL",
                      "legal", "azure: OCR_AZURE_DI_API_KEY kosong", "Unlimited-OCR", "docling (EasyOCR + TableFormer) 2.143.0",
-                     "mistral-ocr-latest", "7 angka acuan"):  # fmt: skip
+                     "mistral-ocr-latest", "7 angka acuan",
+                     "`column_placement`", "`column_end_to_end`"):  # fmt: skip
         assert required in text, required

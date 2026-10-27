@@ -7,6 +7,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 from _common import anchor_grid, parse_args, subset_pdf, write_meta, write_page
+from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import EasyOcrOptions, PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
@@ -22,6 +23,15 @@ def pipeline_options(mode: str) -> PdfPipelineOptions:
     return PdfPipelineOptions(do_table_structure=True, do_ocr=True, ocr_options=ocr)
 
 
+def format_option(mode: str) -> PdfFormatOption:
+    options = pipeline_options(mode)
+    if mode == "reference-tables":
+        return PdfFormatOption(pipeline_options=options)
+    # The default docling-parse backend renders image-only pages so poorly that EasyOCR loses most text
+    # (synthetic BSD scans: Dice 0.06); pypdfium2 renders them cleanly (Dice ~0.9). Text-layer pages are unaffected.
+    return PdfFormatOption(pipeline_options=options, backend=PyPdfiumDocumentBackend)
+
+
 def _grid(data) -> list[list[str]]:
     cells = [
         (c.text, c.start_row_offset_idx, c.end_row_offset_idx, c.start_col_offset_idx, c.end_col_offset_idx)
@@ -33,9 +43,7 @@ def _grid(data) -> list[list[str]]:
 def main() -> None:
     args = parse_args(["auto", "ocr", "reference-tables"])
     start = time.perf_counter()
-    converter = DocumentConverter(
-        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options(args.mode))}
-    )
+    converter = DocumentConverter(format_options={InputFormat.PDF: format_option(args.mode)})
     with tempfile.TemporaryDirectory(dir=args.out) as tmp:
         part = subset_pdf(args.pdf, args.pages, Path(tmp) / "part.pdf")
         doc = converter.convert(part).document
@@ -51,7 +59,11 @@ def main() -> None:
             write_page(args.out, page, doc.export_to_markdown(page_no=index))
     write_meta(
         args.out,
-        model="docling (EasyOCR + TableFormer)" if args.mode != "reference-tables" else "docling (TableFormer, no OCR)",
+        model=(
+            "docling (EasyOCR + TableFormer, pypdfium2)"
+            if args.mode != "reference-tables"
+            else "docling (TableFormer, no OCR, docling-parse)"
+        ),
         version=version("docling"),
         ocr_lang=OCR_LANG if args.mode != "reference-tables" else None,
         seconds_total=round(time.perf_counter() - start, 3),

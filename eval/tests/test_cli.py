@@ -7,8 +7,9 @@ from ocr_eval.store import PageOutput
 
 
 class FakeEngine:
-    def __init__(self, name, price=None, reason=None):
+    def __init__(self, name, price=None, reason=None, limit=None):
         self.name = name
+        self.limit = limit  # pages beyond the limit get no output, as after an interrupted run
         self.paid_price_per_page = price
         self.reason = reason
         self.calls = []
@@ -21,7 +22,7 @@ class FakeEngine:
 
     async def run(self, pdf, pages, *, is_scan_variant):
         self.calls.append((pdf.name, list(pages), is_scan_variant))
-        for page in pages:
+        for page in pages[: self.limit]:
             yield PageOutput(page, "Row total assets 1.234.567.000 and 2.345.678.000", 0.5)
 
 
@@ -52,28 +53,42 @@ def test_run_without_yes_stops_before_paid_calls(tmp_path, digital_pdf, capsys):
     assert main(_args("degrade", out, digital_pdf)) == 0
     code = main(_args("run", out, digital_pdf, "--engines", "free,paid"), engine_factory=factory, reference=reference)
     assert code == 2
-    assert paid.calls == []
-    assert sorted(free.calls) == [("digital.pdf", [1, 2], False), ("digital.pdf", [1, 2], True)]
+    assert paid.calls == [] and free.calls == [] and reference.calls == 0  # nothing starts
     printed = capsys.readouterr().out
-    assert "paid" in printed and "0.04" in printed and "--yes" in printed
-    assert json.loads((out / "reference_tables.json").read_text())["digital"][0]["page"] == 1
+    assert "paid" in printed and "0.04" in printed and "--yes" in printed and "--engines" in printed
 
+    assert main(_args("run", out, digital_pdf, "--engines", "free"), engine_factory=factory, reference=reference) == 0
+    assert sorted(free.calls) == [("digital.pdf", [1, 2], False), ("digital.pdf", [1, 2], True)]
+    assert json.loads((out / "reference_tables.json").read_text())["digital"][0]["page"] == 1
     main(_args("run", out, digital_pdf, "--engines", "free"), engine_factory=factory, reference=reference)
     assert reference.calls == 1  # cached in reference_tables.json
     assert len(free.calls) == 2  # cached in runs/
 
 
+def test_all_without_yes_stops_before_scoring(tmp_path, digital_pdf):
+    out = tmp_path / "out"
+    factory = lambda names: [FakeEngine("paid", price=0.01)]
+    assert (
+        main(_args("all", out, digital_pdf, "--engines", "paid"), engine_factory=factory, reference=FakeReference())
+        == 2
+    )
+    assert not (out / "scores.json").exists()
+
+
 def test_all_with_yes_writes_report_and_lists_skipped_engines(tmp_path, digital_pdf):
     out = tmp_path / "out"
-    engines = [FakeEngine("free"), FakeEngine("paid", price=0.01), FakeEngine("gone", reason="key kosong")]
+    engines = [FakeEngine("free"), FakeEngine("paid", price=0.01), FakeEngine("gone", reason="key kosong"),
+               FakeEngine("half", limit=1)]  # fmt: skip
     factory = lambda names: [e for e in engines if e.name in names]
-    args = _args("all", out, digital_pdf, "--engines", "free,paid,gone", "--yes")
+    args = _args("all", out, digital_pdf, "--engines", "free,paid,gone,half", "--yes")
     assert main(args, engine_factory=factory, reference=FakeReference()) == 0
     assert engines[1].calls and not engines[2].calls
     assert json.loads((out / "synthetic_map.json").read_text()) == {"digital": {"1": 1, "2": 2}}
     assert (out / "synthetic" / "digital.pdf").exists()
     book = openpyxl.load_workbook(out / "ocr_eval.xlsx")
     engines_in_summary = {r[1] for r in book["Summary"].iter_rows(min_row=2, values_only=True)}
-    assert engines_in_summary == {"free", "paid", "reference"}
+    assert engines_in_summary == {"free", "paid", "half", "reference"}
     md = (out / "summary.md").read_text(encoding="utf-8")
     assert "gone: key kosong" in md and "paid-v1" in md
+    assert "Cakupan tidak lengkap: half di kolom `digital` dinilai pada 1 dari 2 halaman" in md
+    assert "Cakupan tidak lengkap: free" not in md
