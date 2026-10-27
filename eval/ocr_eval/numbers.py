@@ -7,11 +7,16 @@ from app.domain.quality import _TAG
 
 _AMOUNT = r"\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d{7,}"
 _NUM = re.compile(_AMOUNT)
+AMOUNT_RE = _NUM
 _NEG_PAREN = re.compile(rf"\(\s*({_AMOUNT})\s*\)")
 _NEG_MINUS = re.compile(rf"(?<![\w.,])[-−]\s*({_AMOUNT})")
 _MIN_DIGITS = 7
 _MAX_MISREAD_DIFF = 2  # digits that may differ for two amounts to count as one misread
 _MAX_EXAMPLES = 4
+
+
+def strip_tags(text: str) -> str:
+    return _TAG.sub(" ", text)
 
 
 @dataclass
@@ -28,7 +33,7 @@ class NumberScore:
     dropped_examples: list[str] = field(default_factory=list)
 
 
-def _normalize(raw: str) -> str:
+def normalize_amount(raw: str) -> str:
     """Digits only; a trailing 1-2 digit decimal is dropped when its separator is not the thousands one."""
     seps = re.findall(r"[.,]", raw)
     tail = re.search(r"([.,])(\d{1,2})$", raw)
@@ -40,7 +45,7 @@ def _normalize(raw: str) -> str:
 
 
 def _count(matches: list[str]) -> Counter[str]:
-    keys = (_normalize(m) for m in matches)
+    keys = (normalize_amount(m) for m in matches)
     return Counter(k for k in keys if len(k) >= _MIN_DIGITS)
 
 
