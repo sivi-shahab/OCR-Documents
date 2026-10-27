@@ -1,0 +1,1 @@
+docling[easyocr]>=2.40
