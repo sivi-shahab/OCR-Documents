@@ -193,7 +193,8 @@ def score_run(run_dir: Path, pdfs: list[Path]) -> list[PageRow]:
 def balance_checks(run_dir: Path, pdfs: list[Path]) -> dict[str, dict[str, bool | None]]:
     """Total assets == total liabilities + equity per document and engine (original PDFs).
 
-    The pseudo engine "reference" runs the check on the text layer of the digital pages, to validate the checker.
+    The pseudo engine "reference" runs the check on the text layer of the digital pages, to validate the checker;
+    there the amounts follow the label line one per line, which check_balance reads with its line fallback.
     """
     run_dir = Path(run_dir)
     classification = load_json(run_dir / "classification.json", {})
@@ -261,13 +262,15 @@ def _summarize_group(column: str, engine: str, rows: list[PageRow], metas: dict,
     seconds = [r.seconds for r in rows if r.seconds is not None]
     passed, failed = sum(t.passed for t in totals), sum(t.failed for t in totals)
 
-    # Each page gets an equal share of its run's wall-clock time. Paid engines are billed per scored page, so
+    # Each page gets an equal share of its runs' wall-clock time. Paid engines are billed per scored page, so
     # their cost needs only the price (an interrupted run may lack wall_seconds); self-hosted cost is GPU time.
     wall = cost = 0.0
     timed = costed = 0
     for r in rows:
         meta = metas.get((variant_of(column), r.document, engine)) or {}
-        share = meta["wall_seconds"] / len(meta["pages"]) if meta.get("wall_seconds") and meta.get("pages") else None
+        # timed_pages = pages yielded while the clock ran (meta.json written before it existed: every cached page).
+        timed_pages = meta.get("timed_pages", len(meta.get("pages", {})))
+        share = meta["wall_seconds"] / timed_pages if meta.get("wall_seconds") and timed_pages else None
         if share is not None:
             wall += share
             timed += 1

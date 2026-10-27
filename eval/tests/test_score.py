@@ -188,3 +188,36 @@ def test_coverage_gaps_flags_engines_scored_on_fewer_pages():
     classification = {"doc": {"1": "digital", "2": "digital"}}
     gaps = coverage_gaps(rows, classification, {"doc": {"1": 1}})
     assert gaps == [("azure", "digital", 1, 2)]
+
+
+def test_time_share_divides_by_timed_pages():
+    # 4 cached pages, but only 2 of them were yielded while timed (the rest came from an untimed, interrupted run).
+    rows = [_row(page=1), _row(page=2)]
+    metas = {("original", "doc", "unlimited"): {
+        "wall_seconds": 60.0, "timed_pages": 2, "pages": {str(p): {} for p in (1, 2, 3, 4)}, "price_per_page": None,
+    }}  # fmt: skip
+    [s] = summarize(rows, metas, 0.95)
+    assert s.pages_per_minute == pytest.approx(2.0)  # 30 s per page, not 15
+    assert s.cost_usd == pytest.approx(60 / 3600 * 0.95)
+
+
+def test_non_identity_synthetic_map(tmp_path):
+    # Synthetic page 2 was made from original page 3: it must be scored against page 3's text, under page 3.
+    pdf = tmp_path / "doc.pdf"
+    doc = pymupdf.open()
+    for lines in (["Kas 1.234.567"], [], ["Utang 9.876.543", "Modal 5.555.555"]):
+        page = doc.new_page()
+        for i, line in enumerate(lines):
+            page.insert_text((50, 60 + i * 20), line, fontsize=10)
+    doc.save(pdf)
+    out = tmp_path / "run"
+    out.mkdir()
+    (out / "classification.json").write_text(json.dumps({"doc": {"1": "digital", "2": "scan", "3": "digital"}}))
+    (out / "synthetic_map.json").write_text(json.dumps({"doc": {"1": 1, "2": 3}}))
+    store = RunStore(out / "runs")
+    store.save_page("synthetic", "doc", "unlimited", PageOutput(1, "Kas 1.234.567", 1.0))
+    store.save_page("synthetic", "doc", "unlimited", PageOutput(2, "Utang 9.876.543 Modal 5.555.555", 1.0))
+    rows = sorted(_by(score_run(out, [pdf]), "synthetic_scan", "unlimited"), key=lambda r: r.page)
+    assert [(r.page, r.kind, r.number.reference, r.number.matched) for r in rows] == [
+        (1, "digital", 1, 1), (3, "digital", 2, 2),
+    ]  # fmt: skip

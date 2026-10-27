@@ -86,3 +86,56 @@ def test_meta_write_leaves_no_temp_file(tmp_path):
     store = RunStore(tmp_path)
     store.update_meta("v", "d", "e", model="m")
     assert [p.name for p in (tmp_path / "v" / "d" / "e").iterdir()] == ["meta.json"]
+
+
+class CrashingEngine(FakeEngine):
+    """Yields the first pages, then raises (an interrupted run)."""
+
+    def __init__(self, crash_after: int, exc: BaseException):
+        super().__init__()
+        self._crash_after = crash_after
+        self._exc = exc
+
+    async def run(self, pdf: Path, pages: list[int], *, is_scan_variant: bool):
+        self.calls.append(list(pages))
+        for i, page in enumerate(pages):
+            if i == self._crash_after:
+                raise self._exc
+            yield PageOutput(page, f"text {page}", 0.5)
+
+
+async def test_wall_time_recorded_when_engine_raises(tmp_path):
+    import asyncio
+
+    import pytest
+
+    store = RunStore(tmp_path)
+    for exc in (RuntimeError("boom"), asyncio.CancelledError()):
+        with pytest.raises(type(exc)):
+            await run_engine(CrashingEngine(2, exc), store, "original", Path(f"{type(exc).__name__}.pdf"),
+                             [1, 2, 3], False)  # fmt: skip
+        meta = store.meta("original", type(exc).__name__, "fake")
+        assert meta["timed_pages"] == 2
+        assert meta["wall_seconds"] >= 0
+        assert meta["model"] == "fake-1"
+
+
+async def test_resume_accumulates_wall_time_and_timed_pages(tmp_path):
+    import pytest
+
+    store = RunStore(tmp_path)
+    with pytest.raises(RuntimeError):
+        await run_engine(CrashingEngine(1, RuntimeError("x")), store, "original", Path("doc.pdf"), [1, 2, 3], False)
+    first = store.meta("original", "doc", "fake")["wall_seconds"]
+    await run_engine(FakeEngine(), store, "original", Path("doc.pdf"), [1, 2, 3], False)
+    meta = store.meta("original", "doc", "fake")
+    assert meta["timed_pages"] == 3
+    assert meta["wall_seconds"] >= first
+    assert sorted(meta["pages"]) == ["1", "2", "3"]
+
+
+async def test_retry_counts_retried_pages_as_timed(tmp_path):
+    store = RunStore(tmp_path)
+    await run_engine(FakeEngine(fail_pages=[2]), store, "original", Path("doc.pdf"), [1, 2], False)
+    await run_engine(FakeEngine(), store, "original", Path("doc.pdf"), [1, 2], False)
+    assert store.meta("original", "doc", "fake")["timed_pages"] == 3  # page 2 ran twice, so its time counts twice

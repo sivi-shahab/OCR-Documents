@@ -99,17 +99,28 @@ class RunStore:
 async def run_engine(
     engine: Engine, store: RunStore, variant: str, pdf: Path, pages: list[int], is_scan_variant: bool
 ) -> None:
-    """Runs only the pages not yet cached and records the wall-clock time of this run."""
+    """Runs only the pages not yet cached and records the wall-clock time of this run.
+
+    wall_seconds and timed_pages (pages yielded while timed) accumulate across resumed and retried runs, and are
+    recorded even when the run is interrupted, so wall_seconds / timed_pages is the time per page attempt.
+    """
     doc = Path(pdf).stem
     todo = store.missing_pages(variant, doc, engine.name, pages)
     if not todo:
         return
     store.update_meta(variant, doc, engine.name, started=datetime.now(timezone.utc).isoformat(timespec="seconds"))
     start = time.perf_counter()
-    async for out in engine.run(pdf, todo, is_scan_variant=is_scan_variant):
-        store.save_page(variant, doc, engine.name, out)
-    wall = time.perf_counter() - start
-    store.update_meta(variant, doc, engine.name, **engine.meta_info())
-    # Accumulate across resumed runs so wall_seconds covers all pages.
-    previous = store.meta(variant, doc, engine.name).get("wall_seconds", 0.0)
-    store.update_meta(variant, doc, engine.name, wall_seconds=round(previous + wall, 3))
+    yielded = 0
+    try:
+        async for out in engine.run(pdf, todo, is_scan_variant=is_scan_variant):
+            store.save_page(variant, doc, engine.name, out)
+            yielded += 1
+    finally:
+        wall = time.perf_counter() - start
+        meta = store.meta(variant, doc, engine.name)
+        store.update_meta(
+            variant, doc, engine.name,
+            **engine.meta_info(),
+            wall_seconds=round(meta.get("wall_seconds", 0.0) + wall, 3),
+            timed_pages=meta.get("timed_pages", 0) + yielded,
+        )  # fmt: skip
