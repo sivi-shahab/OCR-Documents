@@ -4,6 +4,8 @@ Alat evaluasi mandiri untuk membandingkan engine OCR pada dokumen keuangan: Unli
 Intelligence, Mistral OCR, Docling, dan MinerU. Alat ini hanya membaca dari `api/` (memakai adapter Azure/Mistral dan
 `Settings`); tidak ada file di `api/` yang diubah.
 
+Arsitektur, definisi metrik, dan cara menambah engine: [docs/evaluation/README.md](../docs/evaluation/README.md).
+
 Alur: `classify` (halaman digital / scan / scan dengan text layer tersembunyi) → `degrade` (halaman digital dirender
 menjadi scan sintetis) → `run` (semua engine, hasil di-cache per halaman) → `score` → `report`. Perintah `all`
 menjalankan semuanya.
