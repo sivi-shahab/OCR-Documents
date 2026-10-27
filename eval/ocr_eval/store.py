@@ -1,6 +1,7 @@
 """On-disk cache of engine output, so interrupted or repeated runs never re-call an engine."""
 
 import json
+import os
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -25,6 +26,9 @@ class Engine(Protocol):
     def available(self) -> str | None:
         """Reason the engine cannot be used, or None when it is ready."""
 
+    def meta_info(self) -> dict:
+        """Fields (model, concurrency, ...) recorded in meta.json after a run."""
+
     def run(self, pdf: Path, pages: list[int], *, is_scan_variant: bool) -> AsyncIterator[PageOutput]: ...
 
 
@@ -39,7 +43,13 @@ class RunStore:
         return self._dir(variant, doc, engine) / f"page_{page:04d}.md"
 
     def missing_pages(self, variant: str, doc: str, engine: str, pages: list[int]) -> list[int]:
-        return [p for p in pages if not self._page_path(variant, doc, engine, p).exists()]
+        recorded = self.meta(variant, doc, engine).get("pages", {})
+        # A page that failed is retried on resume, so errors are never cached permanently.
+        return [
+            p
+            for p in pages
+            if not self._page_path(variant, doc, engine, p).exists() or recorded.get(str(p), {}).get("error")
+        ]
 
     def save_page(self, variant: str, doc: str, engine: str, out: PageOutput) -> None:
         path = self._page_path(variant, doc, engine, out.page)
@@ -80,7 +90,10 @@ class RunStore:
     def _write_meta(self, variant: str, doc: str, engine: str, meta: dict) -> None:
         directory = self._dir(variant, doc, engine)
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / "meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+        target = directory / "meta.json"
+        tmp = directory / "meta.json.tmp"
+        tmp.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, target)
 
 
 async def run_engine(
@@ -96,6 +109,7 @@ async def run_engine(
     async for out in engine.run(pdf, todo, is_scan_variant=is_scan_variant):
         store.save_page(variant, doc, engine.name, out)
     wall = time.perf_counter() - start
+    store.update_meta(variant, doc, engine.name, **engine.meta_info())
     # Accumulate across resumed runs so wall_seconds covers all pages.
     previous = store.meta(variant, doc, engine.name).get("wall_seconds", 0.0)
     store.update_meta(variant, doc, engine.name, wall_seconds=round(previous + wall, 3))

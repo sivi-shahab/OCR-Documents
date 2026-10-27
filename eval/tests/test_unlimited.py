@@ -41,7 +41,7 @@ async def test_unlimited_http_error_is_page_error(digital_pdf):
     assert all(o.error and o.markdown == "" for o in outs)
 
 
-def test_available():
+async def test_available_works_inside_running_loop():
     ok = UnlimitedEngine(transport=httpx.MockTransport(_handler("")))
     assert ok.available() is None
 
@@ -50,3 +50,8 @@ def test_available():
 
     reason = UnlimitedEngine(transport=httpx.MockTransport(down)).available()
     assert reason and "8100" in reason
+
+
+async def test_meta_info():
+    info = UnlimitedEngine(concurrency=5, dpi=150).meta_info()
+    assert info == {"model": "Unlimited-OCR", "concurrency": 5, "dpi": 150}

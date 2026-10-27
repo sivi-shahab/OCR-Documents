@@ -14,6 +14,9 @@ class FakeEngine:
     def available(self):
         return None
 
+    def meta_info(self):
+        return {"model": "fake-1", "concurrency": 3}
+
     async def run(self, pdf: Path, pages: list[int], *, is_scan_variant: bool):
         self.calls.append(list(pages))
         for page in pages:
@@ -59,3 +62,27 @@ def test_missing_pages_and_meta_defaults(tmp_path):
     store.update_meta("v", "d", "e", model="m")
     store.update_meta("v", "d", "e", concurrency=4)
     assert store.meta("v", "d", "e") == {"model": "m", "concurrency": 4}
+
+
+async def test_meta_contains_engine_info(tmp_path):
+    store = RunStore(tmp_path)
+    await run_engine(FakeEngine(), store, "original", Path("doc.pdf"), [1], False)
+    meta = store.meta("original", "doc", "fake")
+    assert meta["model"] == "fake-1" and meta["concurrency"] == 3
+
+
+async def test_failed_page_is_retried_on_resume(tmp_path):
+    store = RunStore(tmp_path)
+    await run_engine(FakeEngine(fail_pages=[2]), store, "original", Path("doc.pdf"), [1, 2], False)
+    retry = FakeEngine()
+    await run_engine(retry, store, "original", Path("doc.pdf"), [1, 2], False)
+    assert retry.calls == [[2]]
+    page = store.load_page("original", "doc", "fake", 2)
+    assert page.error is None and page.markdown == "text 2"
+    assert store.meta("original", "doc", "fake")["pages"]["2"]["error"] is None
+
+
+def test_meta_write_leaves_no_temp_file(tmp_path):
+    store = RunStore(tmp_path)
+    store.update_meta("v", "d", "e", model="m")
+    assert [p.name for p in (tmp_path / "v" / "d" / "e").iterdir()] == ["meta.json"]

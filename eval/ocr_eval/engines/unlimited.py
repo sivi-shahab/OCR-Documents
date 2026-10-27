@@ -27,7 +27,7 @@ class UnlimitedEngine:
         base_url: str = "http://localhost:8100/v1",
         concurrency: int = 32,
         dpi: int = 200,
-        transport: httpx.AsyncBaseTransport | None = None,
+        transport: httpx.AsyncBaseTransport | httpx.BaseTransport | None = None,
     ) -> None:
         self._base_url = base_url
         self._concurrency = concurrency
@@ -38,13 +38,16 @@ class UnlimitedEngine:
         return httpx.AsyncClient(base_url=self._base_url, timeout=_TIMEOUT, transport=self._transport)
 
     def available(self) -> str | None:
-        async def check() -> bool:
-            async with self._client() as client:
-                return await VllmOcrEngine(client, _CONFIG).is_healthy()
+        # Synchronous httpx so it is safe to call from inside a running event loop.
+        try:
+            with httpx.Client(base_url=self._base_url, timeout=10.0, transport=self._transport) as client:
+                healthy = client.get("/models").is_success
+        except httpx.HTTPError:
+            healthy = False
+        return None if healthy else f"vLLM tidak merespons di {self._base_url}"
 
-        if asyncio.run(check()):
-            return None
-        return f"vLLM tidak merespons di {self._base_url}"
+    def meta_info(self) -> dict:
+        return {"model": _CONFIG.model_name, "concurrency": self._concurrency, "dpi": self._dpi}
 
     async def run(self, pdf: Path, pages: list[int], *, is_scan_variant: bool) -> AsyncIterator[PageOutput]:
         semaphore = asyncio.Semaphore(self._concurrency)
